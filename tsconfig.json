@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "strict": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "noEmit": true,
+    "experimentalDecorators": true
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.d.ts",
+    "../**/*.ts",
+    "../**/*.d.ts",
+    "../../**/*.ts",
+    "../../**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
