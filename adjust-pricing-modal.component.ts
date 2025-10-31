@@ -22,8 +22,11 @@ import { OrderSharedService } from '@call-center/order-shared/lib/order-shared.s
 import { SharedExtensionConstants } from '@call-center/order-shared/lib/shared-extension.constants';
 import { Constants } from '@call-center/order-shared/lib/common/order.constants';
 import { OrderCommonService } from '@call-center/order-shared/lib/data-service/order-common.service';
+// @ts-ignore: build pipeline provides the concrete implementation
 import { ExtnAdjustPricingDataService } from '../data-service/adjust-pricing-data.service';
+// @ts-ignore: build pipeline provides the concrete constants bundle
 import { ExtensionConstants } from '../../features/extension.constants';
+// @ts-ignore: build pipeline provides the manage charge component
 import { ManageChargePopUpComponent } from '../../features/manage-charge-pop-up/manage-charge-pop-up.component';
 @Component({
     selector: 'call-center-adjust-pricing-modal',
@@ -705,8 +708,28 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
         this.allChargeList=response;
 
         return response.map((i, index) => {
-            this.extnEvaluation(i); 
+            this.extnEvaluation(i);
             const currentCharge = this.getChargeDetails(i);
+            const chargeDisplayName = this.getChargeName(i.ChargeCategory, i.ChargeName, i);
+            const selectedChargePair = this.selectedChargePairs[index];
+            const chargeTypeKey = selectedChargePair?.chargeType || i?.ChargeType ||
+                (i.IsBillable == 'Y' && i.IsDiscount == 'N' ? Constants.BILLABLE_CODE : Constants.DISCOUNT_CODE);
+            const cachedChargeName = selectedChargePair?.chargeName;
+            if (selectedChargePair) {
+                selectedChargePair.chargeName = null;
+            }
+            const filteredChargeNames = this._filterSelectedChargeNames(
+                this.allChargeNameList,
+                chargeTypeKey
+            );
+            if (selectedChargePair) {
+                selectedChargePair.chargeName = cachedChargeName;
+            }
+            const chargeNameList = this._markSelectedChargeOption(
+                filteredChargeNames,
+                i?.ChargeName,
+                chargeDisplayName
+            );
             const row = [
                 {
                     data: {
@@ -736,18 +759,18 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
                 },
                 {
                     data: {
-                        value: this.getChargeName(i.ChargeCategory, i.ChargeName,i),
-                        // discountLabel:  i.Description ? (i.IsDiscount === 'Y' ? this.translate.instant('ORDER_PRICING_SUMMARY.ADJUST_PRICING_MODAL.MSG_TOOLTIP_LINE_DISCOUNT', {desc: i.Description}) : 
+                        value: chargeDisplayName,
+                        // discountLabel:  i.Description ? (i.IsDiscount === 'Y' ? this.translate.instant('ORDER_PRICING_SUMMARY.ADJUST_PRICING_MODAL.MSG_TOOLTIP_LINE_DISCOUNT', {desc: i.Description}) :
                         // this.translate.instant('ORDER_PRICING_SUMMARY.ADJUST_PRICING_MODAL.MSG_TOOLTIP_LINE_CHARGE', {desc: i.Description })) : "",
-                        chargeNameList: this._filterSelectedChargeNames(this.allChargeNameList, ExtensionConstants.EXTN_DISCOUNT),
+                        chargeNameList,
                         index,
-						list: this.isSaveAllChargesEnabled && i.ChargeType ? this.getChargeNameList(i.IsDiscount, i.IsBillable, i.ChargeName) : [],
+                        list: this.isSaveAllChargesEnabled && i.ChargeType ? this.getChargeNameList(i.IsDiscount, i.IsBillable, i.ChargeName) : [],
                         newRow: i.newRow,
                         isDisable: false,
                         isManual: i.IsManual
                     },
                     template:!this.isResourceAllowedToAddChangeOrderCharges || this.cannotAllowModification(i.IsManual,i.newRow)   ? this.chargeNameReadOnly : this.chargeName,
-                    title: this.getChargeName(i.ChargeCategory,i.ChargeName,i),
+                    title: chargeDisplayName,
                 },
                 this.isLineLevel && {
                     data: {
@@ -970,10 +993,11 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
             this.headerChargeDetailsData.HeaderCharge[index].IsDiscount = isDiscount;
         }
         // Apply filtered charge names
-        list = this._filterSelectedChargeNames(list, changeValue);
+        const filteredList = this._filterSelectedChargeNames(list, changeValue);
+        const resetList = this._markSelectedChargeOption(filteredList);
         this.model.data[index][0].data.value = changeValue;
         this.model.data[index][1].data.categoryTypeList = categoryTypeList;
-        this.model.data[index][2].data.chargeNameList = list;
+        this.model.data[index][2].data.chargeNameList = resetList;
     }
     
 
@@ -1002,28 +1026,32 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
         const keyChargeCategory = Constants.KEY_CHARGE_CATEGORY;
         const changeValue = event.item.value;
         const category = event.item.data.ChargeCategory;
-        
+        const description = event?.item?.data?.Description || event?.item?.content;
+
         this.selectedChargeName = event.item.content;
-    
+
+        const isPercentOffSelection = this.selectedChargeName === ExtensionConstants.EXTN_PERCENT_OFF;
+
         // Handle "Percent Off" case
-        if (this.selectedChargeName === ExtensionConstants.EXTN_PERCENT_OFF) {
+        if (isPercentOffSelection) {
             for (let i = 0; i < index; i++) {
-                this.model.data[i][4].data.isDisable = true; 
+                this.model.data[i][4].data.isDisable = true;
             }
-            
+
             this.chargeHeaders.forEach(header => {
                 if (header?.data === ExtensionConstants.EXTN_CHARGE_PERCENTAGE) {
-                    header.visible = true; 
+                    header.visible = true;
                     this.model.data[index][5].data.isDisable = true;
                     this.model.data[index][4].data.isDisable = false;
                 }
             });
-    
+
             this.cmbApplyTo = "CPU";
-        } 
+        }
         else if (this.isLineLevel) {
+            this._resetPercentOffState(index);
             this.model.data[index][5].data.isDisable = false;
-    
+
             for (let i = 0; i <= index; i++) {
                 const curChargePercentage = this.model.data[i][4].data.value;
                 this.model.data[i][4].data.isDisable = true;
@@ -1036,13 +1064,14 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
                     this.model.data[i][5].data.isDisable = true;
                 }
             }
-        } 
+        }
         else {
+            this._resetPercentOffState(index);
             this.model.data[index][5].data.isDisable = false;
             if (this.isManageChargeEnabled !== "Y") {
                 this.cmbApplyTo = "";
-            }    
-            
+            }
+
         }
     
         // Auto-populate shipping discount if applicable
@@ -1064,21 +1093,66 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
         if (this.remainChargeNamesForType[this.model.data[index][0].data.value] === 0) {
             this.ranOutOfChargeOptions = this.getChargeTypeList().length === 0;
         }
-    
+
         // Update charge details based on line or header level
         if (this.isLineLevel) {
             this.lineChargeDetailsData.LineCharge[index].ChargeName = changeValue;
             this.lineChargeDetailsData.LineCharge[index].ChargeCategory = category;
+            const existingChargeNameDetails = this.lineChargeDetailsData.LineCharge[index]?.ChargeNameDetails || {};
+            this.lineChargeDetailsData.LineCharge[index].ChargeNameDetails = {
+                ...existingChargeNameDetails,
+                Description: description
+            };
             this.utilityLineCharge(keyChargeName, changeValue, index);
             this.utilityLineCharge(keyChargeCategory, category, index);
             this.model.data[index][3].data.isDisable = false;
             this.ChangeInApplyToField(event, index);
-        } 
+        }
         else {
             this.headerChargeDetailsData.HeaderCharge[index].ChargeName = changeValue;
             this.headerChargeDetailsData.HeaderCharge[index].ChargeCategory = category;
+            const existingChargeNameDetails = this.headerChargeDetailsData.HeaderCharge[index]?.ChargeNameDetails || {};
+            this.headerChargeDetailsData.HeaderCharge[index].ChargeNameDetails = {
+                ...existingChargeNameDetails,
+                Description: description
+            };
             this.utilityHeaderCharge(keyChargeName, changeValue, index, category);
             this.model.data[index][5].data.isDisable = false;
+        }
+    }
+
+    _resetPercentOffState(index: number) {
+        this.disablePercentOff = true;
+        this.disableChargeAmount = false;
+        this.strChargePercentage = '';
+
+        const row = this.model?.data?.[index];
+        const percentCell = row && row[4] && row[4].data ? row[4].data : null;
+        if (percentCell) {
+            percentCell.value = '';
+            if ('displayValue' in percentCell) {
+                percentCell.displayValue = '';
+            }
+            percentCell.isDisable = true;
+        }
+
+        const amountCell = row && row[5] && row[5].data ? row[5].data : null;
+        if (amountCell) {
+            amountCell.isDisable = false;
+        }
+
+        if (this.isLineLevel) {
+            const lineCharges = this.lineChargeDetailsData?.LineCharge;
+            if (Array.isArray(lineCharges) && lineCharges[index]) {
+                const charge = lineCharges[index];
+                const currentExtn = charge.Extn || {};
+                charge.Extn = {
+                    ...currentExtn,
+                    ExtnChargePercentage: ''
+                };
+                charge.ChargePercentage = '';
+                this.utilityLineCharge(ExtensionConstants.EXTN_CHARGE_PERCENTAGE_CAMEL, '', index);
+            }
         }
     }
     
@@ -1140,9 +1214,16 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
 
     changeInAmountField(data, value) {
       if (!value || !isNaN(value?.toString())) {
-        data.chargeAmountId = value?.toString();
-        this.amountChangedSub.next({ index: data.index, value: value || !isNaN(value) ? value?.toString() : undefined,
-            chargeAmountId: data.chargeAmountId });
+        const normalizedValue = value === undefined || value === null ? '' : value.toString();
+        data.chargeAmountId = normalizedValue;
+        this._cacheChargeAmount(data.index, normalizedValue);
+
+        const shouldSendValue = normalizedValue === '' || !isNaN(Number(normalizedValue));
+        this.amountChangedSub.next({
+            index: data.index,
+            value: shouldSendValue ? normalizedValue : undefined,
+            chargeAmountId: data.chargeAmountId
+        });
       }
     }
 
@@ -1647,22 +1728,88 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
     }
 
     _filterSelectedChargeNames(list, chargeType){
-        let results = []
+        if (!Array.isArray(list)) {
+            return [];
+        }
+
+        const results = [];
         for (let i = 0; i < list.length; i++) {
             const rowData = list[i];
+            if (!rowData) {
+                continue;
+            }
+
+            const description = rowData?.data?.Description || rowData?.content;
             let exists = false;
             for (let j = 0; j < this.selectedChargePairs.length; j++) {
-                const chargePair = this.selectedChargePairs[j]
-                if(chargePair.chargeType == chargeType && chargePair.chargeName == rowData.data.Description){
+                const chargePair = this.selectedChargePairs[j];
+                if (chargePair.chargeType === chargeType && chargePair.chargeName === description) {
                     exists = true;
                     break;
                 }
             }
-            if(!exists){
-                results.push(rowData);
+            if (!exists) {
+                results.push({ ...rowData });
             }
         }
         return results;
+    }
+
+    _markSelectedChargeOption(list, selectedChargeValue?, selectedChargeDescription?) {
+        if (!Array.isArray(list)) {
+            return [];
+        }
+
+        return list.map(option => {
+            const item = { ...option };
+            const description = item?.data?.Description || item?.content;
+            const value = item?.data?.ChargeName || item?.value;
+            const isCurrentSelection = (!!selectedChargeValue && selectedChargeValue === value) ||
+                (!!selectedChargeDescription && selectedChargeDescription === description);
+
+            if (isCurrentSelection) {
+                item.selected = true;
+            } else if (item.selected) {
+                item.selected = false;
+            }
+
+            return item;
+        });
+    }
+
+    _cacheChargeAmount(index, amount) {
+        const normalizedAmount = amount === undefined || amount === null ? '' : amount.toString();
+
+        if (this.isLineLevel) {
+            const lineCharges = this.lineChargeDetailsData?.LineCharge;
+            if (!Array.isArray(lineCharges) || !lineCharges[index]) {
+                return;
+            }
+
+            const charge = lineCharges[index];
+            charge.ChargeAmount = normalizedAmount;
+
+            const perLineLabel = this.nlsMap['ORDER_PRICING_SUMMARY.ADJUST_PRICING_MODAL.LABEL_CHARGE_PER_LINE']?.toUpperCase?.() || '';
+            const chargeApplyTo = (charge.ChargeApplyTo || '').toString().toUpperCase();
+
+            if (chargeApplyTo === 'CPL' || chargeApplyTo === perLineLabel) {
+                charge.ChargePerLine = normalizedAmount;
+                charge.ChargePerUnit = '';
+            } else {
+                charge.ChargePerUnit = normalizedAmount;
+                charge.ChargePerLine = '';
+            }
+
+            this.utilityLineCharge(Constants.KEY_CHARGE_AMOUNT, normalizedAmount, index);
+        } else {
+            const headerCharges = this.headerChargeDetailsData?.HeaderCharge;
+            if (!Array.isArray(headerCharges) || !headerCharges[index]) {
+                return;
+            }
+
+            headerCharges[index].ChargeAmount = normalizedAmount;
+            this.utilityHeaderCharge(Constants.KEY_CHARGE_AMOUNT, normalizedAmount, index);
+        }
     }
 
     changeInChargeAddNewLine(){
@@ -1741,9 +1888,18 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
         this.model.data[index][4].data.isDisable = false;
         this.strChargePercentage = changeValue;
     
+        const targetLineCharge = this.lineChargeDetailsData.LineCharge[index];
+        if (targetLineCharge) {
+            const currentExtn = targetLineCharge.Extn || {};
+            this.lineChargeDetailsData.LineCharge[index].Extn = {
+                ...currentExtn,
+                ExtnChargePercentage: changeValue
+            };
+        }
+
         if (!this.lineChargeDetailsData.LineCharge[index].ChargePercentage ||
             this.lineChargeDetailsData.LineCharge[index].ChargePercentage !== changeValue) {
-            
+
             const chargeAmount = this.getChargeDetails(this.lineChargeDetailsData.LineCharge[index]);
             this.lineChargeDetailsData.LineCharge[index].ChargePercentage = changeValue;
             this.utilityLineCharge(changeKey, changeValue, index);
@@ -1821,7 +1977,7 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
                 : discountedAmount.toFixed(2);
                 if (this.txtChargeAmount && Number(this.txtChargeAmount) >= 0) {
                     this.isApplyToChanged = true;
-                   // this.changeInAmountField(this.model.data[index][5].data,  this.txtChargeAmount);
+                    this._cacheChargeAmount(index, this.txtChargeAmount);
                     this.amountChangedSub.next({
                         index: index,
                         value: this.txtChargeAmount,
@@ -1844,6 +2000,7 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
                         this.isApplyToChanged = true;
                          //this.changeInAmountField(this.model.data[index][4].data, 0);
                         this.saveChargesEnabled = false;
+                        this._cacheChargeAmount(index, this.txtChargeAmount);
                         this.amountChangedSub.next({
                             index: index,
                             value: this.txtChargeAmount,
@@ -1990,9 +2147,9 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
           data: info,
         }));
         if( this.currentChargeCategorys === "SHIPPING" && !this.isLineLevel){
-            this.shippingChargeNameList = this._filterSelectedChargeNames(this.tempModel, this.currentChargeCategorys);
+            this.shippingChargeNameList = cloneDeep(this.tempModel);
         }else{
-            this.allChargeNameList = this._filterSelectedChargeNames(this.tempModel, this.currentChargeCategorys);
+            this.allChargeNameList = cloneDeep(this.tempModel);
 
         }
         
@@ -2155,6 +2312,7 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
             }
           }
         }
+        this._cacheChargeAmount(index, chargeAmount);
         this.amountChangedSub.next({ index:index, value:chargeAmount, chargeAmountId: index });
         this.model.data[index][5].data.isDisable = true;
         this.saveChargesEnabled=true;
@@ -2219,6 +2377,7 @@ export class ExtnAdjustPricingModalComponent extends BaseModal implements OnInit
     
         const totalShippingAmount = Number(ShippingCost) + Number(ShippingTax);
     
+        this._cacheChargeAmount(index, String(totalShippingAmount));
         this.amountChangedSub.next({ index:index, value:String(totalShippingAmount), chargeAmountId: index });
         this.model.data[index][5].data.isDisable = true;
         
